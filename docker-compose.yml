@@ -1,0 +1,17 @@
+version: '3'
+
+services:
+  api:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./downloads:/app/downloads
+    restart: always
+
+  bot:
+    build: .
+    command: python bot.py
+    depends_on:
+      - api
+    restart: always
