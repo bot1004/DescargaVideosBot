@@ -1,17 +1,22 @@
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import (
+    Application,  # Reemplaza Updater
+    CommandHandler,
+    MessageHandler,
+    CallbackContext,
+    filters
+)
 import requests
-import os
 
-API_URL = "http://localhost:5000/download"  # Cambiar en producción
+API_URL = "http://localhost:5001/download"
 
-def start(update: Update, context: CallbackContext):
-    update.message.reply_text(
+async def start(update: Update, context: CallbackContext):
+    await update.message.reply_text(
         "¡Bienvenido al bot de descarga de YouTube!\n"
         "Envía el enlace de un video de YouTube para descargarlo."
     )
 
-def handle_message(update: Update, context: CallbackContext):
+async def handle_message(update: Update, context: CallbackContext):
     url = update.message.text
     
     try:
@@ -30,22 +35,24 @@ def handle_message(update: Update, context: CallbackContext):
                 f"🔗 Enlace: {download_url}"
             )
             
-            update.message.reply_text(message)
+            await update.message.reply_text(message)
         else:
-            update.message.reply_text(f"❌ Error: {data.get('error', 'Error desconocido')}")
+            await update.message.reply_text(f"❌ Error: {data.get('error', 'Error desconocido')}")
     except Exception as e:
-        update.message.reply_text(f"❌ Error de conexión con el servidor: {str(e)}")
+        await update.message.reply_text(f"❌ Error de conexión con el servidor: {str(e)}")
 
 def main():
-    TOKEN = "TU_TOKEN_DE_TELEGRAM"  # Obtener de @BotFather
-    updater = Updater(TOKEN)
-    dispatcher = updater.dispatcher
+    TOKEN = "8121623575:AAH798Us_OvXfiejYhURKDfxA3m4yXWe3PM"
     
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    # Nueva forma de inicializar (v21.0+)
+    application = Application.builder().token(TOKEN).build()
     
-    updater.start_polling()
-    updater.idle()
+    # Handlers (ahora usan async/await)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Inicia el bot
+    application.run_polling()
 
 if __name__ == '__main__':
     main()

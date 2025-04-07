@@ -3,7 +3,7 @@ import os
 
 def download_video(url, quality='highest'):
     try:
-        yt = YouTube(url)
+        yt = YouTube(url, use_oauth=True, allow_oauth_cache=True)  # ¡Nuevos parámetros!
         
         if quality == 'highest':
             stream = yt.streams.get_highest_resolution()
@@ -12,10 +12,10 @@ def download_video(url, quality='highest'):
         else:
             stream = yt.streams.filter(res=quality, file_extension='mp4').first()
         
-        # Crear directorio si no existe
-        os.makedirs('downloads', exist_ok=True)
+        if not stream:
+            return {'status': 'error', 'message': 'No se encontró el formato solicitado'}
         
-        # Descargar el video
+        os.makedirs('downloads', exist_ok=True)
         filename = stream.default_filename
         stream.download('downloads')
         
@@ -29,5 +29,5 @@ def download_video(url, quality='highest'):
     except Exception as e:
         return {
             'status': 'error',
-            'message': str(e)
+            'message': f"Error al descargar: {str(e)}"
         }
