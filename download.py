@@ -15,10 +15,11 @@ def download_video(url):
     try:
         # Opciones para yt-dlp
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',  # Mejor video y audio
-            'noplaylist': True,  # Desactivar descarga de listas de reproducción
+            'format': quality,  # Usar la calidad proporcionada
+            'noplaylist': True,  # No descargar listas de reproducción
             'outtmpl': 'downloads/%(title)s.%(ext)s',  # Ruta de descarga
             'merge_output_format': 'mp4',  # Formato de salida
+            'no_warnings': True,  # Ignorar advertencias
         }
 
         # Descargar video

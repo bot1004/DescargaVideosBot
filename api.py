@@ -1,3 +1,5 @@
+# api.py
+
 from flask import Flask, request, jsonify
 from yt_dlp import YoutubeDL
 import logging
@@ -31,9 +33,11 @@ def download_video(url, quality='bestvideo+bestaudio'):
         return {
             'status': 'success',
             'filename': result['title'] + '.mp4',  # Asignar extensión mp4
-            'title': result['title'],
-            'author': result['uploader'],
-            'length': result['duration']
+            'metadata': {
+                'title': result['title'],
+                'author': result['uploader'],
+                'length': result['duration']
+            }
         }
 
     except Exception as e:
