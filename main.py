@@ -1,12 +1,17 @@
 from pytube import YouTube
 
 def descargar_video(url):
-    yt = YouTube(url)
-    stream = yt.streams.get_highest_resolution()
-    print(f"Descargando: {yt.title}")
-    stream.download()
-    print("¡Descarga completada!")
+    try:
+        yt = YouTube(url)
+        stream = yt.streams.filter(progressive=True, file_extension='mp4').order_by('resolution').desc().first()
+        if stream:
+            print(f"🔽 Baixant: {yt.title}")
+            stream.download()
+            print("✅ Vídeo descarregat correctament!")
+        else:
+            print("⚠️ No s'ha trobat cap stream compatible.")
+    except Exception as e:
+        print(f"❌ Error: {e}")
 
-if __name__ == "__main__":
-    url = input("Introduce la URL del video de YouTube: ")
-    descargar_video(url)
+url = input("🔗 Introdueix la URL del vídeo de YouTube: ")
+descargar_video(url)
