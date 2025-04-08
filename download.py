@@ -1,40 +1,33 @@
 from yt_dlp import YoutubeDL
-import os
 import logging
-import re
 
 logging.basicConfig(level=logging.DEBUG)
 
-# Función para validar URLs de YouTube
+# Función para validar URL de YouTube
 def is_valid_youtube_url(url):
-    pattern = r'(https?://)?(www\.)?(youtube\.com|youtu\.be)/.+'  # Validación básica
-    return re.match(pattern, url) is not None
+    return 'youtube.com/watch?v=' in url
 
-def download_video(url, quality='highest'):
+# Función para descargar el video
+def download_video(url):
     if not is_valid_youtube_url(url):
         return {'status': 'error', 'message': 'URL no válida de YouTube'}
 
     try:
-        # Opciones de configuración para yt-dlp
+        # Opciones para yt-dlp
         ydl_opts = {
-            'format': quality,  # 'best', 'highest', 'audio', o el que sea solicitado
-            'noplaylist': True,  # Evita descargar listas de reproducción
-            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Define el nombre del archivo
-            'merge_output_format': 'mp4',  # Asegura que se convierta a MP4
-            'postprocessors': [{
-                'key': 'FFmpegVideoConvertor',  # Correcto: Conversión de video
-                'preferedformat': 'mp4',  # Asegura que se convierta a MP4
-            }],
+            'format': 'bestvideo+bestaudio/best',  # Mejor video y audio
+            'noplaylist': True,  # Desactivar descarga de listas de reproducción
+            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Ruta de descarga
+            'merge_output_format': 'mp4',  # Formato de salida
         }
 
-        # Usar yt-dlp con las opciones definidas
+        # Descargar video
         with YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(url, download=True)
 
-        # Devolver la información del archivo descargado
         return {
             'status': 'success',
-            'filename': result['title'] + '.mp4',  # Asignar extensión .mp4
+            'filename': result['title'] + '.mp4',  # Asignar extensión mp4
             'title': result['title'],
             'author': result['uploader'],
             'length': result['duration']

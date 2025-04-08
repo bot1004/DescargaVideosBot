@@ -1,40 +1,60 @@
-from flask import Flask, request, jsonify, send_from_directory
-from download import download_video
-import os
+from flask import Flask, request, jsonify
+from yt_dlp import YoutubeDL
+import logging
 
 app = Flask(__name__)
 
+logging.basicConfig(level=logging.DEBUG)
+
+# Función para validar URL de YouTube
+def is_valid_youtube_url(url):
+    return 'youtube.com/watch?v=' in url
+
+# Función para descargar el video
+def download_video(url, quality='bestvideo+bestaudio'):
+    if not is_valid_youtube_url(url):
+        return {'status': 'error', 'message': 'URL no válida de YouTube'}
+
+    try:
+        # Opciones para yt-dlp
+        ydl_opts = {
+            'format': quality,  # Usa la calidad proporcionada
+            'noplaylist': True,  # Desactivar descarga de listas de reproducción
+            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Ruta de descarga
+            'merge_output_format': 'mp4',  # Formato de salida
+        }
+
+        # Descargar video
+        with YoutubeDL(ydl_opts) as ydl:
+            result = ydl.extract_info(url, download=True)
+
+        return {
+            'status': 'success',
+            'filename': result['title'] + '.mp4',  # Asignar extensión mp4
+            'title': result['title'],
+            'author': result['uploader'],
+            'length': result['duration']
+        }
+
+    except Exception as e:
+        logging.error("Error al descargar:", exc_info=True)
+        return {'status': 'error', 'message': f"Error al descargar: {str(e)}"}
+
 @app.route('/download', methods=['POST'])
 def download():
-    if not request.is_json:
-        return jsonify({'error': 'Content-Type debe ser application/json'}), 400
+    try:
+        # Recibir la URL desde el cuerpo del POST
+        data = request.get_json()
+        url = data.get('url')
+        quality = data.get('quality', 'bestvideo+bestaudio')  # Default quality if not provided
 
-    data = request.get_json()
-    url = data.get('url')
-    quality = data.get('quality', 'highest')
+        # Llamar a la función para descargar el video
+        result = download_video(url, quality)
 
-    if not url:
-        return jsonify({'error': 'URL es requerida'}), 400
-
-    result = download_video(url, quality)
-
-    if result['status'] == 'success':
-        return jsonify({
-            'download_url': f'/downloads/{result["filename"]}',
-            'filename': result["filename"],
-            'metadata': {
-                'title': result['title'],
-                'author': result['author'],
-                'length': result['length']
-            }
-        })
-    else:
-        return jsonify({'error': result['message']}), 500
-
-@app.route('/downloads/<filename>')
-def serve_file(filename):
-    return send_from_directory('downloads', filename)
+        return jsonify(result)
+    except Exception as e:
+        logging.error("Error en la API:", exc_info=True)
+        return jsonify({'status': 'error', 'message': 'Error en la API: ' + str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001)
-
+    app.run(debug=True, host='0.0.0.0', port=5001)
