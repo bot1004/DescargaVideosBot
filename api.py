@@ -78,7 +78,14 @@ def download():
         url = data.get('url')
         download_type = data.get('type', 'video')
 
+        # Establece la calidad por defecto según el tipo de descarga
         quality = 'bestvideo+bestaudio' if download_type == 'video' else 'bestaudio/best'
+
+        # Si es TikTok, ajusta la calidad a "best" para vídeos, ya que TikTok suele tener stream unificado
+        if 'tiktok.com' in url.lower():
+            if download_type == 'video':
+                quality = 'best'
+            # Para audio, normalmente se usa 'bestaudio/best', pero podrías ajustar si fuese necesario
 
         result = download_video(url, quality, download_type)
         return jsonify(result)
