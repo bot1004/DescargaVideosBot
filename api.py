@@ -1,42 +1,55 @@
-# api.py
-
 from flask import Flask, request, jsonify
 from yt_dlp import YoutubeDL
 import logging
+import os
 
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.DEBUG)
-
-# Función para validar URL de YouTube
 def is_valid_youtube_url(url):
-    return 'youtube.com/watch?v=' in url
+    return 'youtube.com/watch?v=' in url or 'youtu.be/' in url
 
-# Función para descargar el video
-def download_video(url, quality='bestvideo+bestaudio'):
+def download_video(url, quality, download_type='video'):
     if not is_valid_youtube_url(url):
         return {'status': 'error', 'message': 'URL no válida de YouTube'}
 
     try:
-        # Opciones para yt-dlp
         ydl_opts = {
-            'format': quality,  # Usa la calidad proporcionada
-            'noplaylist': True,  # Desactivar descarga de listas de reproducción
-            'outtmpl': 'downloads/%(title)s.%(ext)s',  # Ruta de descarga
-            'merge_output_format': 'mp4',  # Formato de salida
+            'format': quality,
+            'noplaylist': True,
+            'outtmpl': 'downloads/%(title)s.%(ext)s',
+            'windowsfilenames': True,
         }
 
-        # Descargar video
+        if download_type == 'audio':
+            ydl_opts.update({
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+            })
+        else:
+            ydl_opts['merge_output_format'] = 'mp4'
+
         with YoutubeDL(ydl_opts) as ydl:
             result = ydl.extract_info(url, download=True)
+            real_path = ydl.prepare_filename(result)
+
+            if download_type == 'audio':
+                real_path = os.path.splitext(real_path)[0] + ".mp3"
+
+        basename = os.path.basename(real_path)
 
         return {
             'status': 'success',
-            'filename': result['title'] + '.mp4',  # Asignar extensión mp4
+            'filename': basename,
             'metadata': {
-                'title': result['title'],
-                'author': result['uploader'],
-                'length': result['duration']
+                'title': result.get('title'),
+                'author': result.get('uploader'),
+                'length': result.get('duration'),
+                'type': download_type
             }
         }
 
@@ -47,18 +60,19 @@ def download_video(url, quality='bestvideo+bestaudio'):
 @app.route('/download', methods=['POST'])
 def download():
     try:
-        # Recibir la URL desde el cuerpo del POST
         data = request.get_json()
         url = data.get('url')
-        quality = data.get('quality', 'bestvideo+bestaudio')  # Default quality if not provided
+        download_type = data.get('type', 'video')
 
-        # Llamar a la función para descargar el video
-        result = download_video(url, quality)
+        quality = 'bestvideo+bestaudio' if download_type == 'video' else 'bestaudio/best'
 
+        result = download_video(url, quality, download_type)
         return jsonify(result)
+
     except Exception as e:
         logging.error("Error en la API:", exc_info=True)
         return jsonify({'status': 'error', 'message': 'Error en la API: ' + str(e)}), 500
 
 if __name__ == '__main__':
+    os.makedirs('downloads', exist_ok=True)
     app.run(debug=True, host='0.0.0.0', port=5001)

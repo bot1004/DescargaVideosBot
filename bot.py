@@ -1,68 +1,76 @@
 import os
 import requests
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, filters
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackContext, ConversationHandler, filters
 import logging
 
-# Configuración de logging
 logging.basicConfig(level=logging.INFO)
 
 API_URL = "http://localhost:5001/download"
+ELEGIR_TIPO = range(1)
 
-# Función para manejar el mensaje
-async def handle_message(update: Update, context: CallbackContext):
-    url = update.message.text.strip()
-
-    try:
-        response = requests.post(API_URL, json={'url': url})
-        data = response.json()
-
-        # Imprimir la respuesta para depurar
-        logging.info(f"Respuesta de la API: {data}")
-
-        if response.status_code == 200:
-            metadata = data.get('metadata', None)  # Usamos get para evitar KeyError
-
-            if metadata is not None:
-                filename = data.get('filename', 'No disponible')  # Usamos get para evitar KeyError
-                file_path = os.path.join("downloads", filename)
-
-                # Mensaje con los detalles del video
-                await update.message.reply_text(
-                    f"✅ Video descargado:\n"
-                    f"📹 Título: {metadata['title']}\n"
-                    f"👤 Autor: {metadata['author']}\n"
-                    f"⏱ Duración: {metadata['length']} segundos\n"
-                    f"📂 Ruta del archivo: {file_path}"
-                )
-            else:
-                await update.message.reply_text("❌ Error: La respuesta no contiene metadata.")
-        else:
-            await update.message.reply_text(f"❌ Error: {data.get('error', 'Error desconocido')}")
-    
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error de conexión con el servidor: {str(e)}")
-
-# Función para iniciar el bot
 async def start(update: Update, context: CallbackContext):
+    await update.message.reply_text("Envía el enlace del vídeo de YouTube que quieres descargar.")
+
+async def recibir_url(update: Update, context: CallbackContext):
+    url = update.message.text.strip()
+    context.user_data['url'] = url
+
+    keyboard = [["🎬 Vídeo completo", "🎵 Solo audio"]]
     await update.message.reply_text(
-        "¡Bienvenido al bot de descarga de YouTube!\n"
-        "Envía el enlace de un video de YouTube para descargarlo."
+        "¿Qué quieres descargar?",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
 
-# Función principal para ejecutar el bot
-def main():
-    TOKEN = "8121623575:AAH798Us_OvXfiejYhURKDfxA3m4yXWe3PM"  # Sustituye por tu token real de Telegram
+    return ELEGIR_TIPO
 
-    # Inicialización de la aplicación
+async def elegir_tipo(update: Update, context: CallbackContext):
+    eleccion = update.message.text.strip()
+    url = context.user_data['url']
+
+    download_type = 'audio' if 'audio' in eleccion.lower() else 'video'
+
+    response = requests.post(API_URL, json={'url': url, 'type': download_type})
+    data = response.json()
+
+    if data['status'] == 'success':
+        metadata = data['metadata']
+        file_path = os.path.join("downloads", data['filename'])
+
+        await update.message.reply_text(
+            f"✅ Archivo descargado:\n"
+            f"📹 Título: {metadata['title']}\n"
+            f"👤 Autor: {metadata['author']}\n"
+            f"⏱ Duración: {metadata['length']} segundos\n"
+            f"📂 Archivo: {file_path}"
+        )
+    else:
+        await update.message.reply_text(f"❌ Error: {data['message']}")
+
+    return ConversationHandler.END
+
+async def cancelar(update: Update, context: CallbackContext):
+    await update.message.reply_text("Operación cancelada.")
+    return ConversationHandler.END
+
+def main():
+    TOKEN = "8121623575:AAH798Us_OvXfiejYhURKDfxA3m4yXWe3PM"
+
     application = Application.builder().token(TOKEN).build()
 
-    # Agregar manejadores
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    conv_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_url)],
+        states={
+            ELEGIR_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_tipo)]
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar)]
+    )
 
-    # Ejecutar el bot
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(conv_handler)
+
     application.run_polling()
 
 if __name__ == '__main__':
+    os.makedirs('downloads', exist_ok=True)
     main()
