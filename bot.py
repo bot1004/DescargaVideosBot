@@ -10,15 +10,36 @@ API_URL = "http://localhost:5001/download"
 ELEGIR_TIPO = range(1)
 
 async def start(update: Update, context: CallbackContext):
-    await update.message.reply_text("Envía el enlace del vídeo de YouTube que quieres descargar.")
+    await update.message.reply_text("Envía el enlace del vídeo que quieres descargar (YouTube, Instagram, TikTok, Twitter, Facebook, etc.).")
+
+def detectar_plataforma(url):
+    plataformas = {
+        'youtube.com': 'YouTube 📺',
+        'youtu.be': 'YouTube 📺',
+        'instagram.com': 'Instagram 📸',
+        'tiktok.com': 'TikTok 🎵',
+        'twitter.com': 'Twitter 🐦',
+        'x.com': 'Twitter 🐦',
+        'facebook.com': 'Facebook 👍',
+        'fb.watch': 'Facebook 👍',
+        'vimeo.com': 'Vimeo 🎞️',
+        'dailymotion.com': 'Dailymotion 📹',
+        'reddit.com': 'Reddit 👽'
+    }
+    for key, nombre in plataformas.items():
+        if key in url:
+            return nombre
+    return 'desconocida ❓'
 
 async def recibir_url(update: Update, context: CallbackContext):
     url = update.message.text.strip()
     context.user_data['url'] = url
+    plataforma = detectar_plataforma(url)
 
     keyboard = [["🎬 Vídeo completo", "🎵 Solo audio"]]
     await update.message.reply_text(
-        "¿Qué quieres descargar?",
+        f"He detectado que el enlace es de {plataforma}.\n"
+        "¿Qué deseas descargar?",
         reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
 
@@ -60,9 +81,7 @@ def main():
 
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_url)],
-        states={
-            ELEGIR_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_tipo)]
-        },
+        states={ ELEGIR_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_tipo)] },
         fallbacks=[CommandHandler('cancelar', cancelar)]
     )
 

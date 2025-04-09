@@ -6,12 +6,26 @@ import os
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
-def is_valid_youtube_url(url):
-    return 'youtube.com/watch?v=' in url or 'youtu.be/' in url
+def is_supported_url(url):
+    supported_sites = [
+        'youtube.com/watch?v=',
+        'youtu.be/',
+        'instagram.com/reel/',
+        'instagram.com/p/',
+        'tiktok.com/',
+        'twitter.com/',
+        'x.com/',
+        'facebook.com/',
+        'fb.watch/',
+        'vimeo.com/',
+        'dailymotion.com/',
+        'reddit.com/'
+    ]
+    return any(site in url for site in supported_sites)
 
 def download_video(url, quality, download_type='video'):
-    if not is_valid_youtube_url(url):
-        return {'status': 'error', 'message': 'URL no válida de YouTube'}
+    if not is_supported_url(url):
+        return {'status': 'error', 'message': 'URL no válida o plataforma no soportada'}
 
     try:
         ydl_opts = {
