@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: pytube-bot
+    runtime: python
+    plan: free        # o standard
+    envVars:
+      - key: 8121623575:AAH798Us_OvXfiejYhURKDfxA3m4yXWe3PM
+        sync: false   # la rellenas en el dashboard
+      - key: N8N_UPLOAD_URL
+        value: https://tu-n8n.../upload
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python main.py"
+    autoDeploy: true
