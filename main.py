@@ -35,25 +35,24 @@ def is_supported_url(url: str) -> bool:
 
 
 def choose_format(info: dict, download_type: str) -> str:
-    """
-    Elige un formato adecuado del diccionario info:
-    - Para video: busca formato progresivo con mejor bitrate total.
-    - Para audio: busca formato de audio con mejor bitrate.
-    """
-    formats = info.get('formats', [])
-    if download_type == 'video':
-        # Formatos progresivos: ambos codecs no none
-        prog = [f for f in formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none']
+    """Elige el mejor formato disponible evitando None en tbr/abr."""
+    formats = info.get("formats", [])
+
+    if download_type == "video":
+        # Formatos progresivos (tienen audio y vídeo en el mismo file)
+        prog = [f for f in formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
         if prog:
-            best = max(prog, key=lambda f: f.get('tbr', 0))
-            return best['format_id']
-    # audio o fallback
-    audio = [f for f in formats if f.get('acodec') != 'none' and f.get('vcodec') in (None, 'none')]
+            best = max(prog, key=lambda f: (f.get("tbr") or 0))
+            return best["format_id"]
+
+    # Solo audio o fallback
+    audio = [f for f in formats if f.get("acodec") != "none" and (f.get("vcodec") in (None, "none"))]
     if audio:
-        best_a = max(audio, key=lambda f: f.get('abr', 0))
-        return best_a['format_id']
-    # última opción
-    return 'best'
+        best_a = max(audio, key=lambda f: (f.get("abr") or 0))
+        return best_a["format_id"]
+
+    # Último recurso
+    return "best"
 
 
 def download_video(url: str, download_type: str = 'video') -> dict:
