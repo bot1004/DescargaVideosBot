@@ -4,18 +4,38 @@ import threading
 import requests
 from flask import Flask, request, jsonify
 from yt_dlp import YoutubeDL
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import (
+    Update, InlineKeyboardButton, InlineKeyboardMarkup,
+    ForceReply
+)
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ConversationHandler, ContextTypes, filters
+    CallbackQueryHandler, ContextTypes, filters
 )
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
 # --- Configuración ---
+logging.basicConfig(level=logging.INFO)
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
     logging.error("🚨 Debes exportar TELEGRAM_TOKEN con tu token de BotFather.")
     exit(1)
 
+# Google Drive
+GDRIVE_CRED_PATH = os.getenv("GOOGLE_CREDS_PATH")
+GDRIVE_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID")
+if not (GDRIVE_CRED_PATH and GDRIVE_FOLDER_ID):
+    logging.warning("No se ha configurado Google Drive. Los archivos no se subirán.")
+else:
+    creds = service_account.Credentials.from_service_account_file(
+        GDRIVE_CRED_PATH,
+        scopes=["https://www.googleapis.com/auth/drive.file"]
+    )
+    drive_service = build('drive', 'v3', credentials=creds)
+
+# Download bot
 N8N_UPLOAD_URL = os.getenv("N8N_UPLOAD_URL", "http://localhost:5678/upload")
 DOWNLOAD_DIR = "downloads"
 API_PORT = int(os.getenv("PORT", 5001))
@@ -25,179 +45,151 @@ SUPPORTED_SITES = [
     'tiktok.com/', 'twitter.com/', 'x.com/', 'facebook.com/', 'fb.watch/',
     'vimeo.com/', 'dailymotion.com/', 'reddit.com/'
 ]
-ELEGIR_TIPO = range(1)
 
-logging.basicConfig(level=logging.INFO)
-
-# --- Funciones de descarga ---
+# --- Funciones auxiliares ---
 def is_supported_url(url: str) -> bool:
     return any(site in url for site in SUPPORTED_SITES)
 
 
 def choose_format(info: dict, download_type: str) -> str:
-    """Elige el mejor formato disponible evitando None en tbr/abr."""
     formats = info.get("formats", [])
-
     if download_type == "video":
-        # Formatos progresivos (tienen audio y vídeo en el mismo file)
         prog = [f for f in formats if f.get("vcodec") != "none" and f.get("acodec") != "none"]
         if prog:
-            best = max(prog, key=lambda f: (f.get("tbr") or 0))
-            return best["format_id"]
-
-    # Solo audio o fallback
-    audio = [f for f in formats if f.get("acodec") != "none" and (f.get("vcodec") in (None, "none"))]
+            return max(prog, key=lambda f: (f.get("tbr") or 0))["format_id"]
+    audio = [f for f in formats if f.get("acodec") != "none" and f.get("vcodec") in (None, "none")]
     if audio:
-        best_a = max(audio, key=lambda f: (f.get("abr") or 0))
-        return best_a["format_id"]
-
-    # Último recurso
+        return max(audio, key=lambda f: (f.get("abr") or 0))["format_id"]
     return "best"
 
 
-def download_video(url: str, download_type: str = 'video') -> dict:
+def download_video(url: str, download_type: str) -> (str, dict, str):
+    # devuelve (status, metadata_dict, path_or_error)
     if not is_supported_url(url):
-        return {'status': 'error', 'message': 'URL no válida o plataforma no soportada'}
+        return 'error', {'message': 'URL no válida o plataforma no soportada'}, None
 
-    # Opciones iniciales
     base_opts = {
         'noplaylist': True,
         'outtmpl': os.path.join(DOWNLOAD_DIR, '%(title)s.%(ext)s'),
         'windowsfilenames': True,
     }
-
     try:
-        # 1) Obtener info de los formatos (sin descargar)
-        ydl_probe = YoutubeDL({**base_opts, 'format': 'best'})
-        info = ydl_probe.extract_info(url, download=False)
-
-        # 2) Elegir formato
-        chosen_fmt = choose_format(info, download_type)
-
-        # 3) Descargar con el formato elegido
-        opts = {**base_opts, 'format': chosen_fmt}
+        probe = YoutubeDL({**base_opts, 'format': 'best'})
+        info = probe.extract_info(url, download=False)
+        fmt = choose_format(info, download_type)
+        opts = {**base_opts, 'format': fmt}
         if download_type == 'video':
             opts['merge_output_format'] = 'mp4'
         else:
-            # convierte a mp3
             opts['postprocessors'] = [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }]
-
-        with YoutubeDL(opts) as ydl:
-            result = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(result)
-            if download_type == 'audio':
-                base, _ = os.path.splitext(path)
-                path = base + '.mp3'
-
-        filename = os.path.basename(path)
-        return {
-            'status': 'success',
-            'filename': filename,
-            'metadata': {
-                'title': result.get('title'),
-                'author': result.get('uploader'),
-                'length': result.get('duration'),
-                'type': download_type
-            }
+        ydl = YoutubeDL(opts)
+        result = ydl.extract_info(url, download=True)
+        path = ydl.prepare_filename(result)
+        if download_type == 'audio':
+            path = os.path.splitext(path)[0] + '.mp3'
+        meta = {
+            'title': result.get('title'),
+            'author': result.get('uploader'),
+            'length': result.get('duration'),
+            'type': download_type
         }
-
+        return 'success', meta, path
     except Exception as e:
-        logging.error("Error al descargar:", exc_info=True)
-        return {'status': 'error', 'message': f"Error al descargar: {e}"}
+        logging.error("Error descargando:", exc_info=True)
+        return 'error', {'message': str(e)}, None
 
-# --- Servicio Flask ---
+
+def upload_to_drive(path: str) -> str:
+    if not (GDRIVE_CRED_PATH and GDRIVE_FOLDER_ID):
+        return None
+    file_metadata = {'name': os.path.basename(path), 'parents': [GDRIVE_FOLDER_ID]}
+    media = MediaFileUpload(path, resumable=False)
+    file = drive_service.files().create(
+        body=file_metadata, media_body=media, fields='webViewLink'
+    ).execute()
+    return file.get('webViewLink')
+
+# --- API Flask ---
 app = Flask(__name__)
-
 @app.route('/download', methods=['POST'])
 def download_endpoint():
-    try:
-        payload = request.get_json() or {}
-        url = payload.get('url')
-        dtype = payload.get('type', 'video')
-        result = download_video(url, dtype)
-        return jsonify(result)
-    except Exception as e:
-        logging.error("Error en la API:", exc_info=True)
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-
+    data = request.get_json() or {}
+    status, meta, path_or_error = download_video(data.get('url'), data.get('type', 'video'))
+    if status != 'success':
+        return jsonify({'status': 'error', 'message': meta.get('message')}), 400
+    return jsonify({'status': 'success', 'metadata': meta, 'path': path_or_error})
 
 def run_flask():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     app.run(host='0.0.0.0', port=API_PORT, use_reloader=False)
 
-# --- Handlers del bot ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Envía el enlace del vídeo que quieres descargar (YouTube, Instagram, TikTok, etc.)."
+# --- Bot de Telegram ---
+async def show_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("🔽 Descargar", callback_data='download')],
+        [InlineKeyboardButton("❓ Ayuda", callback_data='help')]
+    ]
+    await update.message.reply_text("¡Bienvenido! Selecciona una opción:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-async def recibir_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "Usa el menú para seleccionar 'Descargar'. Luego envía la URL y elige formato: video o audio.\n"
+        "Los vídeos se subirán también a Google Drive si está configurado."
+    )
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(text)
+
+async def download_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text(
+        "Envía el enlace del contenido:", reply_markup=ForceReply(selective=True)
+    )
+
+async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     context.user_data['url'] = url
-    keyboard = [["🎬 Vídeo completo", "🎵 Solo audio"]]
-    await update.message.reply_text(
-        "¿Qué deseas descargar?",
-        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    keyboard = [
+        [InlineKeyboardButton("🎬 Vídeo completo", callback_data='format_video')],
+        [InlineKeyboardButton("🎵 Solo audio", callback_data='format_audio')]
+    ]
+    await update.message.reply_text("¿Qué formato deseas?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
-    return ELEGIR_TIPO
 
-async def elegir_tipo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    choice = update.message.text.strip().lower()
-    url = context.user_data['url']
-    dtype = 'audio' if 'audio' in choice else 'video'
+async def handle_format(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.callback_query.answer()
+    dtype = 'audio' if update.callback_query.data == 'format_audio' else 'video'
+    url = context.user_data.get('url')
+    status, meta, path = download_video(url, dtype)
+    if status != 'success':
+        await update.callback_query.message.reply_text(f"❌ {meta.get('message')}")
+        return
+    # Enviar al chat
+    await update.callback_query.message.reply_document(
+        document=open(path, 'rb'),
+        caption=(f"✅ Descargado: {meta['title']}\n👤 {meta['author']}\n⏱ {meta['length']}s")
+    )
+    # Subir a Drive
+    drive_link = upload_to_drive(path)
+    if drive_link:
+        await update.callback_query.message.reply_text(f"📁 Google Drive: {drive_link}")
 
-    result = download_video(url, dtype)
-    if result['status'] != 'success':
-        await update.message.reply_text(f"❌ {result.get('message')}")
-        return ConversationHandler.END
-
-    fn = result['filename']
-    path = os.path.join(DOWNLOAD_DIR, fn)
-    if not os.path.exists(path):
-        await update.message.reply_text("❌ Archivo no encontrado tras descargar.")
-        return ConversationHandler.END
-
-    size = os.path.getsize(path)
-    logging.info(f"Archivo {fn} pesa {size} bytes.")
-
-    if size <= TELEGRAM_FILE_LIMIT:
-        await update.message.reply_document(
-            document=open(path, 'rb'),
-            caption=(f"✅ Descargado:\n📹 {result['metadata']['title']}\n"
-                     f"👤 {result['metadata']['author']}\n"
-                     f"⏱ {result['metadata']['length']}s")
-        )
-    else:
-        try:
-            with open(path, 'rb') as f:
-                r = requests.post(N8N_UPLOAD_URL, files={'file': (fn, f)})
-            link = r.json().get('download_url') if r.ok else None
-            if link:
-                await update.message.reply_text(f"✅ Archivo grande. Descarga en: {link}")
-            else:
-                await update.message.reply_text("❌ Falló subida a n8n.")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error subiendo a n8n: {e}")
-
-    return ConversationHandler.END
-
-async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operación cancelada.")
-    return ConversationHandler.END
-
-# --- Arranque de servicios ---
+# --- Inicialización ---
 if __name__ == '__main__':
     threading.Thread(target=run_flask, daemon=True).start()
-    app_bot = Application.builder().token(TELEGRAM_TOKEN).build()
-    conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_url)],
-        states={ELEGIR_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, elegir_tipo)]},
-        fallbacks=[CommandHandler('cancelar', cancelar)]
-    )
-    app_bot.add_handler(CommandHandler("start", start))
-    app_bot.add_handler(conv)
-    app_bot.run_polling()
+    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # Handlers
+    app.add_handler(CommandHandler('start', show_menu))
+    app.add_handler(CallbackQueryHandler(help_command, pattern='^help$'))
+    app.add_handler(CallbackQueryHandler(download_start, pattern='^download$'))
+    app.add_handler(MessageHandler(filters.TEXT & filters.FORCE_REPLY, handle_url))
+    app.add_handler(CallbackQueryHandler(handle_format, pattern='^format_'))
+    # Mostrar menú por defecto si no es comando
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, show_menu))
+    app.run_polling()
