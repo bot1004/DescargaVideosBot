@@ -251,6 +251,10 @@ async def download_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=ForceReply(selective=True)
     )
 
+def is_reply_to_bot(update: Update) -> bool:
+    """Check if the message is a reply to our bot's message."""
+    return update.message and update.message.reply_to_message and update.message.reply_to_message.from_user.is_bot
+
 async def handle_url(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     context.user_data["url"] = url
@@ -288,7 +292,7 @@ if __name__ == "__main__":
     app_bot.add_handler(CommandHandler("start", show_menu))
     app_bot.add_handler(CallbackQueryHandler(help_cmd,    pattern="^help$"))
     app_bot.add_handler(CallbackQueryHandler(download_start, pattern="^download$"))
-    app_bot.add_handler(MessageHandler(filters.TEXT & filters.FORCE_REPLY, handle_url))
+    app_bot.add_handler(MessageHandler(filters.TEXT & filters.create(is_reply_to_bot), handle_url))
     app_bot.add_handler(CallbackQueryHandler(handle_format, pattern="^fmt_"))
     app_bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, show_menu))
     app_bot.run_polling()
